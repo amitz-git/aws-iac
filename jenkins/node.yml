@@ -1,0 +1,154 @@
+---
+- name: Install & Configure Jenkins Nodes
+  hosts: master
+  become: true
+  vars:
+    jenkins_url: "http://{{ ansible_ssh_host }}:8080"
+    jenkins_username: "admin"
+    node_home: "/home/jenkins"
+    node_docker: "docker"
+    node_terraform: "terraform"
+
+  tasks:
+    - name: Read initial secrets
+      community.docker.docker_container_exec:
+        container: jenkins
+        command: "cat /var/jenkins_home/secrets/initialAdminPassword"
+      register: initial_pwd
+      ignore_errors: true
+
+    - name: Generate Jenkins Node XML (docker)
+      template:
+        src: node-docker.xml.j2
+        dest: /tmp/node.xml
+
+    - name: Check if Docker Node already exists in Jenkins
+      shell: |
+        java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} get-node {{ node_docker }}
+      register: docker_node_check
+      ignore_errors: true
+
+    - name: Create Docker Node in Jenkins
+      shell: |
+        cat /tmp/node.xml | java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} create-node {{ node_docker }}
+      when: docker_node_check.rc != 0
+      ignore_errors: true
+
+    - name: Generate Jenkins Node XML (terraform)
+      template:
+        src: node-tf.xml.j2
+        dest: /tmp/node.xml
+    
+    - name: Check if Terraform Node already exists in Jenkins
+      shell: |
+        java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} get-node {{ node_terraform }}
+      register: tf_node_check
+      ignore_errors: true
+
+    - name: Create Terraform Node in Jenkins
+      shell: |
+        cat /tmp/node.xml | java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} create-node {{ node_terraform }}
+      when: tf_node_check.rc != 0
+      ignore_errors: true
+    
+    - name: Set facts
+      ansible.builtin.set_fact:
+        initial_pwd: "{{ initial_pwd.stdout }}"
+      delegate_facts: true
+
+#Play 2: Copy Slave JAR to Slave Nodes
+- name: Configure Jenkins Slave Nodes
+  hosts: docker:terraform
+  become: true
+  vars:
+    agent_names:
+      - docker
+      - terraform
+  tasks:
+    - name: debug
+      ansible.builtin.debug:
+        msg: "Initial Password: {{hostvars[groups['master'][0]]['initial_pwd']}}"
+
+    - name: Download Jenkins Slave JAR
+      ansible.builtin.get_url:
+        url: http://{{ groups['master'][0] }}:8080/jnlpJars/slave.jar
+        dest: /home/ubuntu/slave.jar
+        mode: '0755'
+      register: slave_download
+      retries: 5
+      delay: 30
+      until: slave_download is succeeded
+
+    - name: Ensure Jenkins group exists
+      ansible.builtin.group:
+        name: jenkins
+        state: present
+
+    - name: Ensure Jenkins user exists
+      ansible.builtin.user:
+        name: jenkins
+        group: jenkins
+        home: /home/jenkins
+        shell: /bin/bash
+        state: present
+
+    - name: Create Jenkins work directory
+      ansible.builtin.file:
+        path: /home/jenkins
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: 0777
+
+    - name: Download agent.jar using curl
+      ansible.builtin.shell:
+        cmd: "curl -sO http://{{ groups['master'][0] }}:8080/jnlpJars/agent.jar"
+      register: curl_result
+      retries: 5
+      delay: 10
+      until: curl_result.rc == 0
+
+    - name: Debug each group name separately
+      ansible.builtin.debug:
+        msg: "{{ item }}"
+      loop: "{{ group_names }}"
+      register: debug_output
+
+    
+    - name: Fetch JNLP file for Jenkins agent
+      get_url:
+        url: "http://{{ groups['master'][0] }}:8080/computer/{{ item }}/slave-agent.jnlp"
+        dest: "/tmp/slave-agent-{{ item }}.jnlp"
+        headers:
+          Jenkins-Crumb: "a123random456number"
+        url_username: "admin"
+        url_password: "{{hostvars[groups['master'][0]]['initial_pwd']}}"
+        force_basic_auth: yes
+      loop: "{{ group_names }}"
+    
+    - name: Run the Jenkins agent command in non-interactive mode
+      ansible.builtin.shell:
+        cmd: "nohup java -jar agent.jar -url http://{{ groups['master'][0] }}:8080/ -secret $(cat /tmp/slave-agent-{{ item }}) -name {{ inventory_hostname }} -webSocket -workDir /home/jenkins > /var/log/jenkins-agent.log 2>&1 &"
+      async: 45
+      poll: 0
+      loop: "{{ group_names }}"
+
+
+    # - name: Run the Jenkins agent command
+    #   ansible.builtin.shell:
+    #     cmd: "java -jar agent.jar -url http://{{ groups['master'][0] }}:8080/ -secret $(cat /tmp/slave-agent-{{ item }}) -name {{ inventory_hostname }} -webSocket -workDir /home/jenkins"
+    #   register: java_result
+    #   retries: 5
+    #   delay: 10
+    #   until: java_result.rc == 0
+    #   loop: "{{ group_names }}"
+    #   notify: Restart Jenkins agent service  # Notify handler on success
+
+  # handlers:
+  #   - name: Restart Jenkins agent service
+  #     ansible.builtin.systemd:
+  #       name: jenkins-agent
+  #       state: restarted
+  #     when: 
+  #       - java_result.results is defined
+  #       - java_result.results | selectattr('rc', 'defined') | map(attribute='rc') | list | max == 0

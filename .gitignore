@@ -1,0 +1,11 @@
+**/.terraform/**
+*.tfstate
+.terraform.lock.hcl
+terraform.tfstate.backup
+**/terraform.tfstate
+*.pem
+*.ppk
+.vscode
+*.sh
+*.bat
+*local*

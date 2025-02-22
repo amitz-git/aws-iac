@@ -1,0 +1,28 @@
+#https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_intro.html
+- name: Playbook to mount efs on ec2
+  hosts: ec2
+  remote_user: ubuntu
+  become: yes
+  gather_facts: true
+  tasks:
+  - debug:
+      msg: "mount_path:{{ hostvars[inventory_hostname].mount_path }}, efs_endpoint: {{ hostvars[inventory_hostname].efs_endpoint }}"
+  - name: Update apt cache
+    apt:
+      update_cache: yes
+  
+  - name: Ensure mount directory exists.
+    file:
+      path: "/home/ubuntu/efs"
+      state: directory
+      mode: 0755
+      owner: ubuntu
+      group: ubuntu
+
+  - name: Ensure EFS volume is mounted.
+    mount:
+      name: "/home/ubuntu/efs"
+      src: "{{ hostvars[inventory_hostname].efs_endpoint }}"
+      fstype: nfs4
+      opts: nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport
+      state: mounted

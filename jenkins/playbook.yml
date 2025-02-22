@@ -1,0 +1,244 @@
+---
+- name: Install Jenkins master agent tools
+  tags: common-tools
+  hosts: all
+  become: true
+  tasks:
+    - name: Display inventory group names
+      debug:
+        msg: >
+          "group_names: {{ group_names }}"
+          "inventory_hostname : {{ inventory_hostname }}"
+          "part of docker group ? {{ 'docker' in group_names }}"
+          "part of terraform group ? {{ 'terraform' in group_names }}"
+          "part of master group ? {{ 'master' in group_names }}"
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - software-properties-common
+          - curl
+          - openjdk-17-jdk
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+        update_cache: yes
+    
+    - name: Jenkins User and Group creation
+      when: False
+      block:
+      - name: Create Jenkins group with id 1000
+        ansible.builtin.group:
+          name: jenkins
+          gid: 1001
+          state: present
+      
+      - name: Create Jenkins user with id 1000 with bash shell and no password
+        ansible.builtin.user:
+          name: jenkins
+          uid: 1001
+          group: jenkins
+          shell: /bin/bash
+          password: "*"
+          state: present
+
+    - name: jenkins_home directory with read write permission
+      ansible.builtin.file:
+        path: /home/ubuntu/jenkins_home
+        state: directory
+        owner: 1000
+        group: 1000
+        mode: '0755'
+    
+    - name: docker Installation
+      when: "'docker' in group_names or 'master' in group_names"
+      block:
+      - name: Add an apt signing key for docker
+        ansible.builtin.apt_key:
+          url: https://download.docker.com/linux/ubuntu/gpg
+          state: present
+      
+      - name: Add docker repository into sources list
+        ansible.builtin.apt_repository:
+          repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable
+          state: present
+      
+      - name: Update cache & Install docker
+        ansible.builtin.apt:
+          update_cache: yes
+          state: present
+          pkg:
+          - docker-ce
+      
+      - name: Ensure Docker service is enabled and started
+        ansible.builtin.systemd_service:
+          state: started
+          name: docker    
+          enabled: yes
+
+      - name: Add user to the docker group
+        ansible.builtin.user:
+          name: "{{ ansible_user }}"
+          groups: docker
+          append: yes
+      
+      - name: add jenkins user to docker group
+        ansible.builtin.user:
+          name: jenkins
+          groups: docker
+          append: yes
+    
+    - name: Install Terraform
+      when: "'terraform' in group_names"
+      block:
+      - name: Update apt package index
+        ansible.builtin.apt:
+          update_cache: yes
+
+      - name: Add HashiCorp GPG key
+        ansible.builtin.get_url:
+          url: https://apt.releases.hashicorp.com/gpg
+          dest: /tmp/hashicorp.gpg
+        register: hashicorp_gpg
+
+      - name: Convert GPG key to dearmored format
+        ansible.builtin.command:
+          cmd: gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg /tmp/hashicorp.gpg
+        args:
+          creates: /usr/share/keyrings/hashicorp-archive-keyring.gpg
+        when: hashicorp_gpg.changed
+
+      - name: Verify GPG key fingerprint
+        ansible.builtin.command:
+          cmd: gpg --no-default-keyring --keyring /usr/share/keyrings/hashicorp-archive-keyring.gpg --fingerprint
+
+      - name: Add HashiCorp repository
+        ansible.builtin.copy:
+          dest: /etc/apt/sources.list.d/hashicorp.list
+          content: "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com {{ ansible_distribution_release }} main"
+
+      - name: Update apt cache after adding HashiCorp repo
+        ansible.builtin.apt:
+          update_cache: yes
+
+      - name: Install Terraform
+        ansible.builtin.apt:
+          name: terraform
+          state: present
+      
+- name: Install & run Jenkins
+  tags: jenkins
+  hosts: 
+    - master
+  become: true
+  tasks:
+    - name: docker pull jenkins/jenkins:lts
+      community.docker.docker_image:
+        name: jenkins/jenkins
+        source: pull
+        state: present
+        tag: lts
+        
+    - name: Create a volume
+      community.docker.docker_volume:
+        name: jenkins_home
+    
+    - name: start jenkins container
+      community.docker.docker_container:
+        name: jenkins
+        image: jenkins/jenkins:lts
+        state: started
+        restart_policy: always
+        ports:
+          - "8080:8080"
+          - "50000:50000"
+        user: "jenkins:jenkins"
+        volumes:
+          - "/var/run/docker.sock:/var/run/docker.sock"
+          - "/home/ubuntu/jenkins_home:/var/jenkins_home"
+        env:
+          #JAVA_OPTS: "-Djenkins.install.runSetupWizard=false"
+          #JENKINS_OPTS: "--prefix=/jenkins"
+          #JENKINS_JAVA_OPTIONS: "-Djenkins.install.runSetupWizard=false
+          #JENKINS_USER: "{{ ansible_user }}"
+          #JENKINS_PASS: "admin123"
+          #JAVA_OPTS: "-Djenkins.install.runSetupWizard=true"
+          JENKINS_EMAIL: "{{ ansible_user }}@example.com"
+          JENKINS_URL: "http://{{ ansible_ssh_host }}:8080"
+          JENKINS_SLAVE_AGENT_PORT: "50000"
+          JENKINS_HOME: "/var/jenkins_home"
+          JENKINS_UC: "https://updates.jenkins.io"
+          JENKINS_UC_EXPERIMENTAL: "https://updates.jenkins.io/experimental"
+          JENKINS_OPTS: "--httpPort=8080"
+          
+    - name: Wait for Jenkins to start
+      ansible.builtin.wait_for:
+        host: "{{ ansible_ssh_host }}"
+        port: 8080
+        timeout: 30
+        delay: 25
+        state: started
+    
+    - name: Read initial secrets
+      community.docker.docker_container_exec:
+        container: jenkins
+        command: "cat /var/jenkins_home/secrets/initialAdminPassword"
+      register: initial_pwd
+      ignore_errors: true
+    
+    - name: Install Jenkins Plugins
+      block:
+      - name: Download jenkinsCLI
+        ansible.builtin.get_url:
+          url: http://{{ ansible_ssh_host }}:8080/jnlpJars/jenkins-cli.jar
+          dest: /home/ubuntu/jenkins-cli.jar
+          mode: 0755
+      
+      - name: Copy plugins.txt file to host machine
+        ansible.builtin.copy:
+          src: plugins.txt
+          dest: /home/ubuntu/plugins.txt
+      
+      - name: Check jenkinsCLI who-am-i
+        ansible.builtin.command:
+          cmd: "java -jar /home/ubuntu/jenkins-cli.jar -s http://localhost:8080 who-am-i"
+        register: whoami
+        ignore_errors: true
+        environment:
+          JENKINS_USER_ID: admin
+          JENKINS_API_TOKEN: "{{ initial_pwd.stdout }}"
+      
+      - name: who-am-i result
+        ansible.builtin.debug:
+          msg: "{{ whoami.stdout }}"
+      
+      - name: Install Jenkins Plugins
+        ansible.builtin.shell:
+          cmd: "java -jar /home/ubuntu/jenkins-cli.jar -s http://localhost:8080 install-plugin $(cat plugins.txt) -restart"
+        environment:
+          JENKINS_USER_ID: admin
+          JENKINS_API_TOKEN: "{{ initial_pwd.stdout }}"
+        register: plugin_install
+        ignore_errors: true
+      
+      - name: Jenkins Plugin Installation Result
+        ansible.builtin.debug:
+          msg: "{{ plugin_install.stdout }}"
+
+    - name: Wait for Jenkins to restart after plugin installation
+      ansible.builtin.wait_for:
+        host: "{{ ansible_ssh_host }}"
+        port: 8080
+        timeout: 30
+        delay: 10
+        state: started
+
+    - name: Initial Admin Password
+      ansible.builtin.debug:
+        msg: "Jenkins Initial Admin Password : {{ initial_pwd.stdout }}"
+    
+    - name: Jenkins URL
+      ansible.builtin.debug:
+        msg: "Jenkins URL : http://{{ ansible_ssh_host }}:8080"

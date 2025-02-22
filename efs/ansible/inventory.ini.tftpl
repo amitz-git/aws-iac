@@ -1,0 +1,12 @@
+#https://docs.ansible.com/ansible/latest/inventory_guide/intro_inventory.html
+[ec2]
+%{ for ec2_host in ec2_hosts ~}
+${ec2_host}
+%{ endfor ~}
+
+[ec2:vars]
+ansible_connection=ssh
+ansible_ssh_private_key_file=${ssh_private_key_file} 
+ansible-user=ubuntu
+mount_path="/home/ubuntu/efs"
+efs_endpoint=${efs_hostname}:/

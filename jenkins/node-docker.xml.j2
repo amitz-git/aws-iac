@@ -1,0 +1,18 @@
+<slave>
+    <name>{{ node_docker| regex_replace('[^a-zA-Z0-9_-]', '_') }}</name>
+    <description>Linux Slave</description>
+    <remoteFS>{{ node_home }}</remoteFS>
+    <numExecutors>{{ executors | default(1) }}</numExecutors>
+    <mode>NORMAL</mode>
+    <retentionStrategy class="hudson.slaves.RetentionStrategy$Always"/>
+    <launcher class="hudson.slaves.JNLPLauncher">
+        <workDirSettings>
+        <disabled>false</disabled>
+        <internalDir>remoting</internalDir>
+        <failIfWorkDirIsMissing>false</failIfWorkDirIsMissing>
+        </workDirSettings>
+        <webSocket>false</webSocket>
+    </launcher>
+    <label>{{ docker | default([]) | join(' ') }}</label>
+    <nodeProperties/>
+</slave>
