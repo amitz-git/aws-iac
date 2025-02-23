@@ -108,13 +108,6 @@
       delay: 10
       until: curl_result.rc == 0
 
-    - name: Debug each group name separately
-      ansible.builtin.debug:
-        msg: "{{ item }}"
-      loop: "{{ group_names }}"
-      register: debug_output
-
-    
     - name: Fetch JNLP file for Jenkins agent
       get_url:
         url: "http://{{ groups['master'][0] }}:8080/computer/{{ item }}/slave-agent.jnlp"
@@ -125,13 +118,44 @@
         url_password: "{{hostvars[groups['master'][0]]['initial_pwd']}}"
         force_basic_auth: yes
       loop: "{{ group_names }}"
-    
-    - name: Run the Jenkins agent command in non-interactive mode
-      ansible.builtin.shell:
-        cmd: "nohup java -jar agent.jar -url http://{{ groups['master'][0] }}:8080/ -secret $(cat /tmp/slave-agent-{{ item }}) -name {{ inventory_hostname }} -webSocket -workDir /home/jenkins > /var/log/jenkins-agent.log 2>&1 &"
-      async: 45
-      poll: 0
+
+    - name: Install required packages for secret extraction from xml
+      ansible.builtin.apt:
+        name:
+          - libxml2-utils
+        state: present
+        update_cache: yes
+
+    - name: Extract secret from JNLP file
+      shell: "xmllint --xpath 'string(//jnlp/application-desc/argument[1])' /tmp/slave-agent-{{ item }}.jnlp"
+      register: jenkins_secret
+      changed_when: false
       loop: "{{ group_names }}"
+      loop_control:
+        label: "Extracting secret for {{ item }}"
+
+    - name: Debug - Show extracted secret
+      debug:
+        msg: "Extracted Secret for {{ item }}: {{ jenkins_secret.results | selectattr('item', 'equalto', item) | map(attribute='stdout') | first | default('SECRET EXTRACTION FAILED') }}"
+      loop: "{{ group_names }}"
+      loop_control:
+        label: "Secret for {{ item }}"
+
+    - name: Start Jenkins agent
+      shell: "nohup java -jar /home/jenkins/agent.jar -url http://{{ groups['master'][0] }}:8080/ -secret {{ jenkins_secret.results | selectattr('item', 'equalto', item) | map(attribute='stdout') | first }} -name {{ item }} -webSocket -workDir /home/jenkins > /home/jenkins/agent.log 2>&1 &"
+      when: jenkins_secret.results | selectattr('item', 'equalto', item) | map(attribute='stdout') | first is defined and (jenkins_secret.results | selectattr('item', 'equalto', item) | map(attribute='stdout') | first | length > 0)
+      loop: "{{ group_names }}"
+      loop_control:
+        label: "Starting Jenkins agent for {{ item }}"
+    
+    # - name: Run the Jenkins agent command in non-interactive mode
+    #   ansible.builtin.shell:
+    #     cmd: "nohup java -jar agent.jar -url http://{{ groups['master'][0] }}:8080/ -secret {{ jenkins_secret.stdout }} -name {{ inventory_hostname }} -webSocket -workDir /home/jenkins > /var/log/jenkins-agent.log 2>&1 &"
+    #     # java -jar agent.jar -url http://18.61.4.213:8080/ -secret @/tmp/slave-agent-docker.jnlp -name docker -webSocket -workDir /home/jenkins
+    #     # java -jar agent.jar -url http://18.61.4.213:8080/ -secret @/tmp/slave-agent-terraform.jnlp -name terraform -webSocket -workDir /home/jenkins
+    #   async: 45
+    #   poll: 0
+    #   loop: "{{ group_names }}"
 
 
     # - name: Run the Jenkins agent command
