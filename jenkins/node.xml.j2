@@ -1,5 +1,5 @@
 <slave>
-    <name>{{ node_docker| regex_replace('[^a-zA-Z0-9_-]', '_') }}</name>
+    <name>{{ item | regex_replace('[^a-zA-Z0-9_-]', '_') }}</name>
     <description>Linux Slave</description>
     <remoteFS>{{ node_home }}</remoteFS>
     <numExecutors>{{ executors | default(1) }}</numExecutors>
@@ -13,6 +13,6 @@
         </workDirSettings>
         <webSocket>false</webSocket>
     </launcher>
-    <label>{{ docker | default([]) | join(' ') }}</label>
+    <label>{{ item | regex_replace('[^a-zA-Z0-9_-]', '_') }}</label>
     <nodeProperties/>
 </slave>

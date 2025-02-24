@@ -17,67 +17,37 @@
       register: initial_pwd
       ignore_errors: true
 
-    - name: Generate Jenkins Node XML (docker)
+    - name: Generate Jenkins node XML configuration for non-master groups
       template:
-        src: node-docker.xml.j2
-        dest: /tmp/node.xml
+        src: node.xml.j2
+        dest: "/tmp/{{ item }}_node.xml"
+      loop: "{{ groups.keys() | difference(['master', 'all', 'ungrouped']) }}" # loop exclude all, master & ungrouped
 
-    - name: Check if Docker Node already exists in Jenkins
+    - name: Ensure Jenkins Nodes Exist (Only for Non-Master Groups)
       shell: |
-        java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} get-node {{ node_docker }}
-      register: docker_node_check
-      ignore_errors: true
-
-    - name: Create Docker Node in Jenkins
-      shell: |
-        cat /tmp/node.xml | java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} create-node {{ node_docker }}
-      when: docker_node_check.rc != 0
-      ignore_errors: true
-
-    - name: Generate Jenkins Node XML (terraform)
-      template:
-        src: node-tf.xml.j2
-        dest: /tmp/node.xml
-    
-    - name: Check if Terraform Node already exists in Jenkins
-      shell: |
-        java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} get-node {{ node_terraform }}
-      register: tf_node_check
-      ignore_errors: true
-
-    - name: Create Terraform Node in Jenkins
-      shell: |
-        cat /tmp/node.xml | java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} create-node {{ node_terraform }}
-      when: tf_node_check.rc != 0
-      ignore_errors: true
-    
+        if java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} get-node {{ item }} >/dev/null 2>&1; then
+          echo "Node {{ item }} already exists, skipping..."
+        else
+          java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} create-node {{ item }} < /tmp/{{ item }}_node.xml
+        fi
+      loop: "{{ groups.keys() | difference(['master', 'all', 'ungrouped']) }}"
+  
     - name: Set facts
       ansible.builtin.set_fact:
         initial_pwd: "{{ initial_pwd.stdout }}"
       delegate_facts: true
 
-#Play 2: Copy Slave JAR to Slave Nodes
+#Play 2: Node hosts 
 - name: Configure Jenkins Slave Nodes
-  hosts: docker:terraform
+  hosts:
+    - docker
+    - terraform
   become: true
   vars:
-    agent_names:
-      - docker
-      - terraform
   tasks:
-    - name: debug
+    - name: Initial password debug
       ansible.builtin.debug:
         msg: "Initial Password: {{hostvars[groups['master'][0]]['initial_pwd']}}"
-
-    - name: Download Jenkins Slave JAR
-      ansible.builtin.get_url:
-        url: http://{{ groups['master'][0] }}:8080/jnlpJars/slave.jar
-        dest: /home/ubuntu/slave.jar
-        mode: '0755'
-      register: slave_download
-      retries: 5
-      delay: 30
-      until: slave_download is succeeded
 
     - name: Ensure Jenkins group exists
       ansible.builtin.group:
@@ -127,16 +97,16 @@
         update_cache: yes
 
     - name: Extract secret from JNLP file
-      shell: "xmllint --xpath 'string(//jnlp/application-desc/argument[1])' /tmp/slave-agent.jnlp > /home/ubuntu/slave-argument.txt"
-      register: jenkins_secret
+      shell: "xmllint --xpath 'string(//jnlp/application-desc/argument[1])' /tmp/slave-agent.jnlp > /tmp/slave-secret.txt"
+      #register: jenkins_secret
       changed_when: false
 
-    - name: Debug - Show extracted secret
-      debug:
-        msg: "{{ jenkins_secret.stdout }}"
+    # - name: Debug - Show extracted secret
+    #   debug:
+    #     msg: "{{ jenkins_secret.stdout }}"
 
     - name: Start Jenkins agent
-      shell: "nohup java -jar agent.jar -url http://{{ groups['master'][0] }}:8080/ -secret @slave-argument.txt -name {{ item }} -webSocket -workDir /home/jenkins > /home/jenkins/agent.log 2>&1 &"
+      shell: "nohup java -jar agent.jar -url http://{{ groups['master'][0] }}:8080/ -secret @/tmp/slave-secret.txt -name {{ item }} -webSocket -workDir /home/jenkins > /home/jenkins/agent.log 2>&1"
       loop: "{{ group_names }}"
-
-    
+      async: 10
+      poll: 0
