@@ -65,7 +65,7 @@
       #mode: '664'
   - name: Systemctl service
     template:
-      src: all-in-one.service.j2
+      src: efs.service.j2
       dest: /etc/systemd/system/all-in-one.service
     notify:
       - Reload systemd
