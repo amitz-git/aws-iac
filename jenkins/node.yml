@@ -6,8 +6,6 @@
     jenkins_url: "http://{{ ansible_ssh_host }}:8080"
     jenkins_username: "admin"
     node_home: "/home/jenkins"
-    node_docker: "docker"
-    node_terraform: "terraform"
 
   tasks:
     - name: Read initial secrets
@@ -21,11 +19,11 @@
       template:
         src: node.xml.j2
         dest: "/tmp/{{ item }}_node.xml"
-      loop: "{{ groups.keys() | difference(['master', 'all', 'ungrouped']) }}" # loop exclude all, master & ungrouped
+      loop: "{{ groups.keys() | difference(['master', 'all', 'ungrouped']) }}" # loop exclude master, all & ungrouped
 
     - name: Ensure Jenkins Nodes Exist (Only for Non-Master Groups)
       shell: |
-        if java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} get-node {{ item }} >/dev/null 2>&1; then
+        if java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} get-node {{ item }} >/tmp/null 2>&1; then
           echo "Node {{ item }} already exists, skipping..."
         else
           java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} create-node {{ item }} < /tmp/{{ item }}_node.xml
