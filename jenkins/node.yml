@@ -42,6 +42,7 @@
     - terraform
   become: true
   vars:
+    agent_dest: "/home/jenkins/agent.jar"
   tasks:
     - name: Initial password debug
       ansible.builtin.debug:
@@ -76,29 +77,13 @@
       delay: 10
       until: curl_result.rc == 0
 
-    - name: Fetch JNLP file for Jenkins agent
-      get_url:
-        url: "http://{{ groups['master'][0] }}:8080/computer/{{ item }}/slave-agent.jnlp"
-        dest: "/tmp/slave-agent.jnlp"
-        headers:
-          Jenkins-Crumb: "a123random456number"
-        url_username: "admin"
-        url_password: "{{hostvars[groups['master'][0]]['initial_pwd']}}"
-        force_basic_auth: yes
-      loop: "{{ group_names }}"
+    - name: Fetch Jenkins agent secret
+      ansible.builtin.shell:
+        cmd: >           
+          curl -s -u "admin:{{hostvars[groups['master'][0]]['initial_pwd']}}" 
+          "http://{{ groups['master'][0] }}:8080/computer/{{ group_names[0] }}/slave-agent.jnlp" | 
+          grep -oP '(?<=<argument>)[a-f0-9]{64}(?=</argument>)' > /tmp/{{ group_names[0] }}_secret.txt
 
-    - name: Install required packages for secret extraction from xml
-      ansible.builtin.apt:
-        name:
-          - libxml2-utils
-        state: present
-        update_cache: yes
-
-    - name: Extract secret from JNLP file
-      shell: "xmllint --xpath 'string(//jnlp/application-desc/argument[1])' /tmp/slave-agent.jnlp > /tmp/slave-secret.txt"
-      register: jenkins_secret
-      changed_when: false
-    
     - name: Create Jenkins agent systemd service
       ansible.builtin.template:
         src: jenkins-agent.service.j2
@@ -114,3 +99,4 @@
         name: jenkins-agent
         state: restarted
         daemon_reload: yes
+        
