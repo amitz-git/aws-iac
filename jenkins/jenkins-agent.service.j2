@@ -5,7 +5,7 @@ After=network.target
 [Service]
 User=jenkins
 WorkingDirectory=/home/jenkins
-ExecStart=/usr/bin/java -jar /home/jenkins/agent.jar -url http://{{ groups['master'][0] }}:8080/ -secret @/tmp/slave-secret.txt -name {{ (group_names | difference(['master']))[0] }} -webSocket -workDir /home/jenkins
+ExecStart=/usr/bin/java -jar {{ agent_jar }} -url http://{{ groups['master'][0] }}:8080/ -secret @/tmp/{{ group_names[0] }}_secret.txt -name {{ group_names[0] }} -webSocket -workDir /home/jenkins
 Restart=always
 RestartSec=10
 

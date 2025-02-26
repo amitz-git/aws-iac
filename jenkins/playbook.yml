@@ -231,8 +231,8 @@
       ansible.builtin.wait_for:
         host: "{{ ansible_ssh_host }}"
         port: 8080
-        timeout: 30
-        delay: 10
+        timeout: 40
+        delay: 30
         state: started
 
     - name: Initial Admin Password
@@ -242,3 +242,106 @@
     - name: Jenkins URL
       ansible.builtin.debug:
         msg: "Jenkins URL : http://{{ ansible_ssh_host }}:8080"
+
+
+- name: Install & Configure Jenkins Nodes
+  hosts: master
+  become: true
+  vars:
+    jenkins_url: "http://{{ ansible_ssh_host }}:8080"
+    jenkins_username: "admin"
+    node_home: "/home/jenkins"
+
+  tasks:
+    - name: Read initial secrets
+      community.docker.docker_container_exec:
+        container: jenkins
+        command: "cat /var/jenkins_home/secrets/initialAdminPassword"
+      register: initial_pwd
+      ignore_errors: true
+
+    - name: Generate Jenkins node XML configuration for non-master groups
+      template:
+        src: node.xml.j2
+        dest: "/tmp/{{ item }}_node.xml"
+      loop: "{{ groups.keys() | difference(['master', 'all', 'ungrouped']) }}" # loop exclude master, all & ungrouped
+
+    - name: Ensure Jenkins Nodes Exist (Only for Non-Master Groups)
+      shell: |
+        if java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} get-node {{ item }} >/dev/null 2>&1; then
+          echo "Node {{ item }} already exists, skipping..."
+        else
+          java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} create-node {{ item }} < /tmp/{{ item }}_node.xml
+        fi
+      loop: "{{ groups.keys() | difference(['master', 'all', 'ungrouped']) }}"
+  
+    - name: Set facts
+      ansible.builtin.set_fact:
+        initial_pwd: "{{ initial_pwd.stdout }}"
+      delegate_facts: true
+
+#Play 2: Node hosts 
+- name: Configure Jenkins Slave Nodes
+  hosts:
+    - docker
+    - terraform
+  become: true
+  vars:
+    agent_jar: "/home/jenkins/agent.jar"
+  tasks:
+    - name: Initial password debug
+      ansible.builtin.debug:
+        msg: "Initial Password: {{hostvars[groups['master'][0]]['initial_pwd']}}"
+
+    - name: Ensure Jenkins group exists
+      ansible.builtin.group:
+        name: jenkins
+        state: present
+
+    - name: Ensure Jenkins user exists
+      ansible.builtin.user:
+        name: jenkins
+        group: jenkins
+        home: /home/jenkins
+        shell: /bin/bash
+        state: present
+
+    - name: Create Jenkins work directory
+      ansible.builtin.file:
+        path: /home/jenkins
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: 0777
+
+    - name: Download agent.jar using curl
+      ansible.builtin.shell:
+        cmd: "curl -s -o /home/jenkins/agent.jar http://{{ groups['master'][0] }}:8080/jnlpJars/agent.jar"
+      register: curl_result
+      retries: 5
+      delay: 10
+      until: curl_result.rc == 0
+
+    - name: Fetch Jenkins agent secret
+      ansible.builtin.shell:
+        cmd: >           
+          curl -s -u "admin:{{hostvars[groups['master'][0]]['initial_pwd']}}" 
+          "http://{{ groups['master'][0] }}:8080/computer/{{ group_names[0] }}/slave-agent.jnlp" | 
+          grep -oP '(?<=<argument>)[a-f0-9]{64}(?=</argument>)' > /tmp/{{ group_names[0] }}_secret.txt
+
+    - name: Create Jenkins agent systemd service
+      ansible.builtin.template:
+        src: jenkins-agent.service.j2
+        dest: /etc/systemd/system/jenkins-agent.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart Jenkins agent
+
+  handlers:
+    - name: Restart Jenkins agent
+      ansible.builtin.systemd:
+        name: jenkins-agent
+        state: restarted
+        daemon_reload: yes
+        
