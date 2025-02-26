@@ -23,7 +23,7 @@
 
     - name: Ensure Jenkins Nodes Exist (Only for Non-Master Groups)
       shell: |
-        if java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} get-node {{ item }} >/tmp/null 2>&1; then
+        if java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} get-node {{ item }} >/dev/null 2>&1; then
           echo "Node {{ item }} already exists, skipping..."
         else
           java -jar /home/ubuntu/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_username }}:{{ initial_pwd.stdout }} create-node {{ item }} < /tmp/{{ item }}_node.xml
