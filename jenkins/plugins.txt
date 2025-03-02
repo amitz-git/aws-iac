@@ -70,6 +70,7 @@ mina-sshd-api-common
 mina-sshd-api-core
 gson-api
 git-client
+git-server
 git
 github
 github-branch-source
