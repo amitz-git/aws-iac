@@ -27,7 +27,7 @@
         update_cache: yes
     
     - name: Jenkins User and Group creation
-      when: False
+      when: "'master' not in group_names"
       block:
       - name: Create Jenkins group with id 1000
         ansible.builtin.group:
@@ -292,27 +292,6 @@
     - name: Initial password debug
       ansible.builtin.debug:
         msg: "Initial Password: {{hostvars[groups['master'][0]]['initial_pwd']}}"
-
-    - name: Ensure Jenkins group exists
-      ansible.builtin.group:
-        name: jenkins
-        state: present
-
-    - name: Ensure Jenkins user exists
-      ansible.builtin.user:
-        name: jenkins
-        group: jenkins
-        home: /home/jenkins
-        shell: /bin/bash
-        state: present
-
-    - name: Create Jenkins work directory
-      ansible.builtin.file:
-        path: /home/jenkins
-        state: directory
-        owner: jenkins
-        group: jenkins
-        mode: 0777
 
     - name: Download agent.jar using curl
       ansible.builtin.shell:
