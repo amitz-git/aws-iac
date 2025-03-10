@@ -1,0 +1,96 @@
+---
+- name: Create a Jenkins job using a Jenkinsfile from Git
+  hosts: master
+  become: true
+  vars:
+    jenkins_url: "http://{{ ansible_ssh_host }}:8080"  # Adjust if Jenkins is running elsewhere
+    jenkins_user: "admin"
+    jenkins_api_token: "{{ api_token.stdout }}"  # Replace with a valid API token
+    job_name: "GitTriggeredPipeline"
+    git_repo_url: "https://github.com/amitz-git/google_site/tree/main/india_post"  # Replace with your actual repo
+    git_branch: "main"
+    jenkins_credentials_id: "{{ git_creds.stdout }}"  # Replace with stored credentials ID in Jenkins
+
+  tasks:
+    - name: Install required dependencies
+      apt:
+        name: curl
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Read initial secrets
+      community.docker.docker_container_exec:
+        container: jenkins
+        command: "cat /var/jenkins_home/secrets/initialAdminPassword"
+      register: initial_pwd
+      ignore_errors: true
+
+    - name: Generate API Token via Groovy Script
+      shell: |
+        echo 'println(jenkins.model.Jenkins.instance.getUser("admin")
+              .getProperty(jenkins.security.ApiTokenProperty.class)
+              .tokenStore.generateNewToken("ansible-token").plainValue)' > /tmp/generate_token.groovy
+
+        java -jar /home/ubuntu/jenkins-cli.jar -s http://{{ ansible_ssh_host }}:8080/ -auth admin:{{ initial_pwd.stdout }} groovy = < /tmp/generate_token.groovy
+      register: api_token
+
+    - name: Show API Token
+      debug:
+        msg: "{{ api_token.stdout }}"
+
+    - name: Add Git Credentials to Jenkins
+      shell: |
+        echo "jenkins.model.Jenkins.instance.securityRealm.createAccount('amitz-git', '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')" > /tmp/add_git_credentials.groovy
+        java -jar /home/ubuntu/jenkins-cli.jar -s http://{{ ansible_ssh_host }}:8080/ -auth admin:{{ initial_pwd.stdout }} groovy = < /tmp/add_git_credentials.groovy
+      when: not ansible_check_mode
+      register: git_creds
+  
+
+    - name: Create Jenkins Pipeline Job using Git
+      uri:
+        url: "http://{{ ansible_ssh_host }}:8080/createItem?name={{ job_name }}"
+        method: POST
+        user: "admin"
+        password: "{{ api_token }}"
+        force_basic_auth: yes
+        headers:
+          Content-Type: "application/xml"
+        body: |
+          <flow-definition plugin="workflow-job">
+            <actions/>
+            <description>Pipeline triggered by Git changes</description>
+            <keepDependencies>false</keepDependencies>
+            <properties/>
+            <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps">
+              <scm class="hudson.plugins.git.GitSCM" plugin="git">
+                <configVersion>2</configVersion>
+                <userRemoteConfigs>
+                  <hudson.plugins.git.UserRemoteConfig>
+                    <url>{{ git_repo_url }}</url>
+                    <credentialsId>{{ jenkins_credentials_id }}</credentialsId>
+                  </hudson.plugins.git.UserRemoteConfig>
+                </userRemoteConfigs>
+                <branches>
+                  <hudson.plugins.git.BranchSpec>
+                    <name>{{ git_branch }}</name>
+                  </hudson.plugins.git.BranchSpec>
+                </branches>
+                <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+                <submoduleCfg class="list"/>
+                <extensions/>
+              </scm>
+              <scriptPath>Jenkinsfile</scriptPath>
+              <lightweight>true</lightweight>
+            </definition>
+            <triggers>
+              <hudson.triggers.SCMTrigger>
+                <spec>H/5 * * * *</spec>
+              </hudson.triggers.SCMTrigger>
+            </triggers>
+          </flow-definition>
+        body_format: raw
+      register: job_creation_response
+
+    - name: Debug job creation response
+      debug:
+        var: job_creation_response
