@@ -5,6 +5,10 @@ resource "aws_vpc" "vpc" {
   }
 }
 
+locals {
+  tags = "my-vpc"
+}
+
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.vpc.id
   cidr_block              = "172.33.10.0/24"
@@ -71,3 +75,4 @@ resource "aws_nat_gateway" "nat_gw" {
 
   tags = local.tags
 }
+
