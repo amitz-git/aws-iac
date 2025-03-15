@@ -130,7 +130,7 @@ output "ssh_key" {
 }
 
 output "vm_ips" {
-  value = [for instance in aws_instance.tools_vm : instance.public_ip]
+  value = [for instance in aws_instance.tools_vm : "${instance.tags.Name} - ${instance.public_ip}"]
 }
 
 # ansible ansible-inventory -i inventory.yml --list (show the inventory)
