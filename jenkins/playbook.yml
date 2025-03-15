@@ -9,9 +9,9 @@
         msg: >
           "group_names: {{ group_names }}"
           "inventory_hostname : {{ inventory_hostname }}"
-          "part of docker group ? {{ 'docker' in group_names }}"
-          "part of terraform group ? {{ 'terraform' in group_names }}"
           "part of master group ? {{ 'master' in group_names }}"
+          "part of docker group ? {{ 'docker' in group_names }}"
+          "part of terraform group ? {{ 'terraform' in group_names }}"          
 
     - name: Install required packages
       ansible.builtin.apt:

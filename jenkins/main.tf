@@ -28,6 +28,7 @@ locals {
   instance_type = "t3.micro"
   vm_count      = 3
   name          = "jenkins"
+  roles         = ["master", "docker", "terraform"]
 }
 
 # default
@@ -134,47 +135,17 @@ output "vm_ips" {
 }
 
 # ansible ansible-inventory -i inventory.yml --list (show the inventory)
-resource "ansible_host" "master" {
+resource "ansible_host" "hosts" {
+  for_each = { for idx, instance in aws_instance.tools_vm : idx => instance }
 
-  name   = aws_instance.tools_vm[0].public_ip
-  groups = ["master"]
+  name   = each.value.public_ip
+  groups = [try(local.roles[each.key], "extra")] # Assigns predefined role or "extra" for additional instances
   variables = {
-    name                         = "master"
+    name                         = try(local.roles[each.key], "extra-${each.key}") # Assigns unique name for extra instances
     ansible_user                 = "ubuntu"
     ansible_ssh_private_key_file = "id_rsa.pem"
     ansible_connection           = "ssh"
     ansible_ssh_common_args      = "-o StrictHostKeyChecking=no"
     ansible_python_interpreter   = "/usr/bin/python3"
   }
-
-}
-
-resource "ansible_host" "docker" {
-
-  name   = aws_instance.tools_vm[1].public_ip
-  groups = ["docker"]
-  variables = {
-    name                         = "docker"
-    ansible_user                 = "ubuntu"
-    ansible_ssh_private_key_file = "id_rsa.pem"
-    ansible_connection           = "ssh"
-    ansible_ssh_common_args      = "-o StrictHostKeyChecking=no"
-    ansible_python_interpreter   = "/usr/bin/python3"
-  }
-
-}
-
-resource "ansible_host" "terraform" {
-
-  name   = aws_instance.tools_vm[2].public_ip
-  groups = ["terraform"]
-  variables = {
-    name                         = "terraform"
-    ansible_user                 = "ubuntu"
-    ansible_ssh_private_key_file = "id_rsa.pem"
-    ansible_connection           = "ssh"
-    ansible_ssh_common_args      = "-o StrictHostKeyChecking=no"
-    ansible_python_interpreter   = "/usr/bin/python3"
-  }
-
 }
