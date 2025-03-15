@@ -26,7 +26,6 @@ locals {
 
   ami           = "ami-0e386fa0b67b8b12c"
   instance_type = "t3.micro"
-  vm_count      = 3
   name          = "jenkins"
   roles         = ["master", "docker", "terraform"]
 }
@@ -82,7 +81,7 @@ resource "aws_security_group" "custom" {
 }
 
 resource "aws_network_interface" "custom" {
-  count = local.vm_count
+  count = length(local.roles)
 
   subnet_id       = data.aws_subnets.default.ids[0]
   security_groups = [aws_security_group.custom.id]
@@ -107,7 +106,7 @@ resource "aws_instance" "tools_vm" {
     aws_network_interface.custom
   ]
 
-  count = local.vm_count
+  count = length(local.roles)
 
   ami           = local.ami
   instance_type = local.instance_type
@@ -122,7 +121,7 @@ resource "aws_instance" "tools_vm" {
   }
 
   key_name = aws_key_pair.custom.key_name
-  tags     = { Name = "${local.name}-vm-${count.index + 1}" }
+  tags     = { Name = "${local.roles[count.index]}-${count.index + 1}" }
 }
 
 output "ssh_key" {
