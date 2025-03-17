@@ -27,7 +27,7 @@ locals {
   ami           = "ami-0e386fa0b67b8b12c"
   instance_type = "t3.micro"
   name          = "jenkins"
-  roles         = ["master", "docker", "terraform"]
+  nodes         = ["master", "docker", "terraform"]
 }
 
 # default
@@ -81,7 +81,7 @@ resource "aws_security_group" "custom" {
 }
 
 resource "aws_network_interface" "custom" {
-  count = length(local.roles)
+  count = length(local.nodes)
 
   subnet_id       = data.aws_subnets.default.ids[0]
   security_groups = [aws_security_group.custom.id]
@@ -106,7 +106,7 @@ resource "aws_instance" "tools_vm" {
     aws_network_interface.custom
   ]
 
-  count = length(local.roles)
+  count = length(local.nodes)
 
   ami           = local.ami
   instance_type = local.instance_type
@@ -121,7 +121,7 @@ resource "aws_instance" "tools_vm" {
   }
 
   key_name = aws_key_pair.custom.key_name
-  tags     = { Name = "${local.roles[count.index]}-${count.index + 1}" }
+  tags     = { Name = "${local.nodes[count.index]}-${count.index + 1}" }
 }
 
 output "ssh_key" {
@@ -138,9 +138,9 @@ resource "ansible_host" "hosts" {
   for_each = { for idx, instance in aws_instance.tools_vm : idx => instance }
 
   name   = each.value.public_ip
-  groups = [try(local.roles[each.key], "extra")] # Assigns predefined role or "extra" for additional instances
+  groups = [try(local.nodes[each.key], "extra")] # Assigns predefined role or "extra" for additional instances
   variables = {
-    name                         = try(local.roles[each.key], "extra-${each.key}") # Assigns unique name for extra instances
+    name                         = try(local.nodes[each.key], "extra-${each.key}") # Assigns unique name for extra instances
     ansible_user                 = "ubuntu"
     ansible_ssh_private_key_file = "id_rsa.pem"
     ansible_connection           = "ssh"
